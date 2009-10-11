@@ -63,6 +63,9 @@ my $pluginName = 'DirectedGraphWebMapPlugin';
 # Guaranteed not to be a topic name:
 my $nodeUrlOutput = '&!@';
 
+# Cache webmaps so that multiple maps may be created from a single pass over all of the topics
+my $webmaps;
+
 =begin TML
 
 ---++ initPlugin($topic, $web, $user) -> $boolean
@@ -129,6 +132,9 @@ sub initPlugin {
     # Allow a sub to be called from the REST interface
     # using the provided alias
     #Foswiki::Func::registerRESTHandler('example', \&restExample);
+
+    # Clear the cache
+    $webmaps = undef;
 
     # Plugin correctly initialized
     return 1;
@@ -462,23 +468,23 @@ sub getWebMap {
 
     my $webmap;
 
-    # No caching
-    $webmap = populateWebMapArray( $params->{"web"}, $params );
+    ## No caching
+    #$webmap = populateWebMapArray( $params->{"web"}, $params );
 
-    ## Fetch web from cache
-#my $mapkey = $params->{"expand"}.$params->{"excludesystem"}.$params->{"exclude"}.$params->{"web"};
-#if (not exists $webmaps->{$mapkey})
-#{
-#    $webmaps->{$mapkey} = populateWebMapArray($params->{"web"}, $params);
-#}
-    ## Make a deep copy of the webmap so that forwardlinks() and backlinks() don't break the cache copy
-    #my %webmapcopy;
-    #for my $baseTopic (keys %{$webmaps->{$mapkey}})
-    #{
-    #    my %targets = %{$webmaps->{$mapkey}->{$baseTopic}};
-    #    $webmapcopy{$baseTopic} = \%targets;
-    #}
-    #$webmap = \%webmapcopy;
+    # Fetch web from cache
+    my $mapkey = $params->{"expand"}.$params->{"excludesystem"}.$params->{"exclude"}.$params->{"web"};
+    if (not exists $webmaps->{$mapkey})
+    {
+        $webmaps->{$mapkey} = populateWebMapArray($params->{"web"}, $params);
+    }
+    # Make a deep copy of the webmap so that forwardlinks() and backlinks() don't break the cache copy
+    my %webmapcopy;
+    for my $baseTopic (keys %{$webmaps->{$mapkey}})
+    {
+        my %targets = %{$webmaps->{$mapkey}->{$baseTopic}};
+        $webmapcopy{$baseTopic} = \%targets;
+    }
+    $webmap = \%webmapcopy;
 
     return $webmap;
 }
@@ -604,8 +610,7 @@ This copyright information applies to the DirectedGraphWebMapPlugin:
 # Additional copyrights apply to some or all of the code as follows:
 # Copyright (C) 2000-2003 Andrea Sterbini, a.sterbini@flashnet.it
 # Copyright (C) 2001-2006 Peter Thoeny, peter@thoeny.org
-# and TWiki Contributors. All Rights Reserved. Foswiki Contributors
-# are listed in the AUTHORS file in the root of this distribution.
+# and TWiki Contributors. All Rights Reserved. 
 #
 # This license applies to DirectedGraphWebMapPlugin *and also to any derivatives*
 #
