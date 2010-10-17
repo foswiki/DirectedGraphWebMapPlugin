@@ -1,4 +1,6 @@
 data/System/DirectedGraphWebMapPlugin.txt NEW
 lib/Foswiki/Plugins/DirectedGraphWebMapPlugin.pm NEW
+lib/Foswiki/Plugins/DirectedGraphWebMapPlugin/FindRenderedLinks.pm NEW
+lib/Foswiki/Plugins/DirectedGraphWebMapPlugin/Search.pm NEW
 pub/System/DirectedGraphWebMapPlugin/sample.png NEW
 pub/System/DirectedGraphWebMapPlugin/SampleMainWebMap.png NEW

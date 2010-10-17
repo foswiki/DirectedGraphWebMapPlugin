@@ -12,7 +12,9 @@ use File::Copy;
 
 my $cwd = cwd();
 
-my $foswiki_base = "/var/www/fwrel/core";
+my $foswiki_base = "/home/www/fw/core";
+
+system("rm $foswiki_base/working/work_areas/DirectedGraphWebMapPlugin/*");
 
 my $main_web_sample_topic = "DirectedGraphWebMapPluginMainWebSample";
 open M, ">$foswiki_base/data/Sandbox/$main_web_sample_topic.txt " or die $!;
@@ -88,7 +90,7 @@ while (<M>) {
 close M or die $!;
 
 $topic_text =~ s/(\%META:TOPICINFO{author=")\w+"/$1ProjectContributor"/ or die;
-$topic_text =~ s/(user=")\w+"/$1ProjectContributor"/g or die;
+$topic_text =~ s/(user=")\w+"/$1ProjectContributor"/g;
 $topic_text =~
 s/(<map id="SampleMainWebMap" name="SampleMainWebMap">).*?(<\/map>)/$1$main_map_content$2/s
   or die;

@@ -21,7 +21,7 @@ sub set_up {
 
     $this->SUPER::set_up();
 
-    $this->{target_web} = "$this->{test_web}Target";
+    $this->{target_web} = "$this->{test_web}/Target";
     Foswiki::Func::createWeb( $this->{target_web} );
 
     my %topic_text = (
@@ -95,11 +95,20 @@ sub set_up {
         WebHome    => undef,
     );
 
+    Foswiki::Plugins::DirectedGraphWebMapPlugin::_cleanCache(
+        $this->{test_web} );
+    Foswiki::Plugins::DirectedGraphWebMapPlugin::_cleanCache(
+        $this->{target_web} );
 }
 
 sub tear_down {
     my $this = shift;
     $this->removeWeb( $this->{target_web} );
+    Foswiki::Plugins::DirectedGraphWebMapPlugin::_cleanCache(
+        $this->{test_web} );
+    Foswiki::Plugins::DirectedGraphWebMapPlugin::_cleanCache(
+        $this->{target_web} );
+
     $this->SUPER::tear_down();
 }
 

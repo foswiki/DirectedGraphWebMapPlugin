@@ -14,6 +14,10 @@ package Foswiki::Plugins::DirectedGraphWebMapPlugin;
 use strict;
 use warnings;
 
+use Digest::MD5 qw( md5_hex );
+use Storable qw( dclone freeze thaw );
+use File::Find qw( find );
+
 require Foswiki::Func;       # The plugins API
 require Foswiki::Plugins;    # For the API version
 
@@ -41,9 +45,9 @@ our $SHORTDESCRIPTION = 'Creates directed graphs showing links between topics';
 # to be able to change settings, then use standard Foswiki preferences that
 # can be defined in your %USERSWEB%.SitePreferences and overridden at the web
 # and topic level.
-#our $NO_PREFS_IN_TOPIC = 1;
+our $NO_PREFS_IN_TOPIC = 1;
 
-my @systemTopics = qw(WebAtom
+our @systemTopics = qw(WebAtom
   WebChanges
   WebHome
   WebIndex
@@ -57,14 +61,17 @@ my @systemTopics = qw(WebAtom
   WebTopicList
   WebCreateNewTopic);
 
-my $debug;
+our $debug;
 my $pluginName = 'DirectedGraphWebMapPlugin';
 
 # Guaranteed not to be a topic name:
 my $nodeUrlOutput = '&!@';
 
 # Cache webmaps so that multiple maps may be created from a single pass over all of the topics
+# The caches for a web are cleared when any topic in the web is changed (or renamed)
 my $webmaps;
+
+my $processingDotMarkup;
 
 =begin TML
 
@@ -133,11 +140,35 @@ sub initPlugin {
     # using the provided alias
     #Foswiki::Func::registerRESTHandler('example', \&restExample);
 
-    # Clear the cache
-    $webmaps = undef;
+    $processingDotMarkup = 0;
 
     # Plugin correctly initialized
     return 1;
+}
+
+sub afterRenameHandler {
+    my ( $oldWeb, $oldTopic, $oldAttachment, $newWeb, $newTopic,
+        $newAttachment ) = @_;
+
+ # DirectedGraphPlugin saves attachments and updates attachment-related metadata
+ # when it renders the dot graph produced by DirectedGraphWebMapPlugin.
+ # That should not invalidate the cache.
+    if ( not $processingDotMarkup ) {
+        _cleanCache($oldWeb);
+
+        _cleanCache($newWeb) if $newWeb ne $oldWeb;
+    }
+}
+
+sub afterSaveHandler {
+    my ( $text, $topic, $web, $error, $meta ) = @_;
+
+ # DirectedGraphPlugin saves attachments and updates attachment-related metadata
+ # when it renders the dot graph produced by DirectedGraphWebMapPlugin.
+ # That should not invalidate the cache.
+    if ( not $processingDotMarkup ) {
+        _cleanCache($web);
+    }
 }
 
 # The function used to handle the %TOPICMAP{...}% macro
@@ -156,8 +187,13 @@ sub _TOPICMAP {
     # $theWeb   - name of the web in the query
     # Return: the result of processing the macro. This will replace the
     # macro call in the final text.
-
     my %params = %$in_params;
+
+    my $t0;
+    if ($debug) {
+        require Time::HiRes;
+        $t0 = [ Time::HiRes::gettimeofday() ];
+    }
 
     commonParameterDefaults( \%params, $theWeb, $theTopic );
 
@@ -207,66 +243,90 @@ sub _TOPICMAP {
           foreach ( sort keys %params );
     }
 
-    my $webmap = getWebMap( \%params );
-
-    my @returnlist;
-
-    my $dot_options = '';
-    $dot_options .= "file=\"" . $params{"file"} . "\" "
-      if defined $params{"file"};
-    $dot_options .= "engine=\"" . $params{"engine"} . "\" "
-      if defined $params{"engine"};
-    push @returnlist, "<dot ${dot_options}map=1>";
-
-    push @returnlist, "digraph webmap {";
-    push @returnlist, "node [shape=Mrecord];"; # uses less space than an ellipse
-    push @returnlist,
-      "node [height=\"0.3\", fontsize=14];";    # makes the text fill the box
-    push @returnlist, "size=\"" . $params{"size"} . "\";";
-    push @returnlist, "rankdir=$params{rankdir};";
-    my $webbgcolor =
-      Foswiki::Func::getPreferencesValue( "WEBBGCOLOR", $params{"web"} );
-    $webbgcolor = '#DDDDDD' unless defined $webbgcolor;
-    my $fontcolor = "black";
-
-    if ( $webbgcolor =~ /^#(..)(..)(..)$/ ) {
-        my $red   = hex($1);
-        my $green = hex($2);
-        my $blue  = hex($3);
-
-        # Use white if the color is dark
-        $fontcolor = "white" if ( $red + $green + $blue ) < ( 3 * 76 );
+    my $graph;
+    if ($params{"cache"})
+    {
+        $graph = _readSavedGraph( \%params );
     }
-    push @returnlist,
-      qq(node [style=filled, color="$webbgcolor", fontcolor="$fontcolor"];);
 
-    # generate the "focus" node here,
-    # and forwardlinks and backlinks only generate outer nodes.
-    push @returnlist, qq("$params{topic}" [URL=")
-      . Foswiki::Func::getViewUrl( $params{"web"}, $params{topic} ) . qq("];);
-    $webmap->{ $params{"topic"} }{$nodeUrlOutput} = 1;
+    if ( not defined $graph ) {
+        my $webmap = getWebMap( \%params );
 
-    # forward links
-    push @returnlist,
-      forwardlinks( $params{"links"}, $params{"topic"}, $webmap,
-        $params{'web'} );
+        my @returnlist;
 
-    # back links
-    push @returnlist,
-      backlinks( $params{"backlinks"}, $params{"topic"}, $webmap,
-        $params{'web'} );
+        my $dot_options = '';
+        $dot_options .= "file=\"" . $params{"file"} . "\" "
+          if defined $params{"file"};
+        $dot_options .= "engine=\"" . $params{"engine"} . "\" "
+          if defined $params{"engine"};
+        push @returnlist, "<dot ${dot_options}map=1>";
 
-    push @returnlist, "}";
+        push @returnlist, "digraph webmap {";
+        push @returnlist,
+          "node [shape=Mrecord];";    # uses less space than an ellipse
+        push @returnlist,
+          "node [height=\"0.3\", fontsize=14];";   # makes the text fill the box
+        push @returnlist, "size=\"" . $params{"size"} . "\";";
+        push @returnlist, "rankdir=$params{rankdir};";
+        my $webbgcolor =
+          Foswiki::Func::getPreferencesValue( "WEBBGCOLOR", $params{"web"} );
+        $webbgcolor = '#DDDDDD' unless defined $webbgcolor;
+        my $fontcolor = "black";
 
-    push @returnlist, "</dot>";
+        if ( $webbgcolor =~ /^#(..)(..)(..)$/ ) {
+            my $red   = hex($1);
+            my $green = hex($2);
+            my $blue  = hex($3);
+
+            # Use white if the color is dark
+            $fontcolor = "white" if ( $red + $green + $blue ) < ( 3 * 76 );
+        }
+        push @returnlist,
+          qq(node [style=filled, color="$webbgcolor", fontcolor="$fontcolor"];);
+
+        # generate the "focus" node here,
+        # and forwardlinks and backlinks only generate outer nodes.
+        push @returnlist,
+            qq("$params{topic}" [URL=")
+          . Foswiki::Func::getViewUrl( $params{"web"}, $params{topic} )
+          . qq("];);
+        $webmap->{ $params{"topic"} }{$nodeUrlOutput} = 1;
+
+        # forward links
+        push @returnlist,
+          forwardlinks( $params{"links"}, $params{"topic"}, $webmap,
+            $params{'web'} );
+
+        # back links
+        push @returnlist,
+          backlinks( $params{"backlinks"}, $params{"topic"}, $webmap,
+            $params{'web'} );
+
+        push @returnlist, "}";
+
+        push @returnlist, "</dot>";
+
+        $graph = join( "\n", @returnlist );
+        _saveGraph( \%params, $graph ) if $params{"cache"};
+    }
 
     if ($debug) {
-        return ( "<verbatim>\n" . join( "\n", @returnlist ) . "\n</verbatim>" );
+        $graph =
+          "<verbatim>\n$graph\n</verbatim>$graph\nDGWMP elapsed seconds: "
+          . Time::HiRes::tv_interval($t0) . "<br>";
     }
-    else {
-        return Foswiki::Func::expandCommonVariables( ( join "\n", @returnlist ),
-            $theTopic, $theWeb );
+    $processingDotMarkup = 1;
+    if ($debug) {
+        $t0 = [ Time::HiRes::gettimeofday() ];
     }
+    $graph = Foswiki::Func::expandCommonVariables( $graph, $theTopic, $theWeb );
+    if ($debug) {
+        $graph .=
+          "DGP elapsed seconds: " . Time::HiRes::tv_interval($t0) . "\n\n";
+    }
+    $processingDotMarkup = 0;
+
+    return $graph;
 }
 
 # The function used to handle the %WEBMAP{...}% macro
@@ -287,6 +347,12 @@ sub _WEBMAP {
     #
     my %params = %$in_params;
 
+    my $t0;
+    if ($debug) {
+        require Time::HiRes;
+        $t0 = [ Time::HiRes::gettimeofday() ];
+    }
+
     commonParameterDefaults( \%params, $theWeb, $theTopic );
 
     if ($debug) {
@@ -302,59 +368,81 @@ sub _WEBMAP {
         ) foreach ( sort keys %params );
     }
 
-    my $webmap = getWebMap( \%params );
-
-    my @returnlist;
-
-    my $dot_options = '';
-    $dot_options .= "file=\"" . $params{"file"} . "\" "
-      if defined $params{"file"};
-    $dot_options .= "engine=\"" . $params{"engine"} . "\" "
-      if defined $params{"engine"};
-    push @returnlist, "<dot ${dot_options}map=1>";
-
-    push @returnlist, "digraph webmap {";
-    push @returnlist, "node [shape=Mrecord];"; # uses less space than an ellipse
-    push @returnlist,
-      "node [height=\"0.3\", fontsize=14];";    # makes the text fill the box
-    push @returnlist, "size=\"" . $params{"size"} . "\";";
-    push @returnlist, "rankdir=$params{rankdir};";
-    my $webbgcolor =
-      Foswiki::Func::getPreferencesValue( "WEBBGCOLOR", $params{"web"} );
-    $webbgcolor = '#DDDDDD' unless defined $webbgcolor;
-    my $fontcolor = "black";
-
-    if ( $webbgcolor =~ /^#(..)(..)(..)$/ ) {
-        my $red   = hex($1);
-        my $green = hex($2);
-        my $blue  = hex($3);
-
-        # Use white if the color is dark
-        $fontcolor = "white" if ( $red + $green + $blue ) < ( 3 * 100 );
+    my $graph;
+    if ($params{"cache"})
+    {
+        $graph = _readSavedGraph( \%params );
     }
-    push @returnlist,
-      qq(node [style=filled, color="$webbgcolor", fontcolor="$fontcolor"];);
 
-    foreach my $baseTopic ( sort keys %$webmap ) {
-        my $url = Foswiki::Func::getViewUrl( $params{'web'}, $baseTopic );
-        push @returnlist, qq("$baseTopic" [URL="$url"];);
-        foreach my $targetTopic ( sort keys %{ $webmap->{$baseTopic} } ) {
-            push @returnlist, qq("$baseTopic" -> "$targetTopic";)
-              if ( $webmap->{$baseTopic}{$targetTopic} );
+    if ( not defined $graph ) {
+        my $webmap = getWebMap( \%params );
+
+        my @returnlist;
+
+        my $dot_options = '';
+        $dot_options .= "file=\"" . $params{"file"} . "\" "
+          if defined $params{"file"};
+        $dot_options .= "engine=\"" . $params{"engine"} . "\" "
+          if defined $params{"engine"};
+        push @returnlist, "<dot ${dot_options}map=1>";
+
+        push @returnlist, "digraph webmap {";
+        push @returnlist,
+          "node [shape=Mrecord];";    # uses less space than an ellipse
+        push @returnlist,
+          "node [height=\"0.3\", fontsize=14];";   # makes the text fill the box
+        push @returnlist, "size=\"" . $params{"size"} . "\";";
+        push @returnlist, "rankdir=$params{rankdir};";
+        my $webbgcolor =
+          Foswiki::Func::getPreferencesValue( "WEBBGCOLOR", $params{"web"} );
+        $webbgcolor = '#DDDDDD' unless defined $webbgcolor;
+        my $fontcolor = "black";
+
+        if ( $webbgcolor =~ /^#(..)(..)(..)$/ ) {
+            my $red   = hex($1);
+            my $green = hex($2);
+            my $blue  = hex($3);
+
+            # Use white if the color is dark
+            $fontcolor = "white" if ( $red + $green + $blue ) < ( 3 * 100 );
         }
+        push @returnlist,
+          qq(node [style=filled, color="$webbgcolor", fontcolor="$fontcolor"];);
+
+        foreach my $baseTopic ( sort keys %$webmap ) {
+            my $url = Foswiki::Func::getViewUrl( $params{'web'}, $baseTopic );
+            push @returnlist, qq("$baseTopic" [URL="$url"];);
+            foreach my $targetTopic ( sort keys %{ $webmap->{$baseTopic} } ) {
+                push @returnlist, qq("$baseTopic" -> "$targetTopic";)
+                  if ( $webmap->{$baseTopic}{$targetTopic} );
+            }
+        }
+
+        push @returnlist, "}";
+
+        push @returnlist, "</dot>";
+
+        $graph = join( "\n", @returnlist );
+        _saveGraph( \%params, $graph ) if $params{"cache"};
     }
-
-    push @returnlist, "}";
-
-    push @returnlist, "</dot>";
 
     if ($debug) {
-        return ( "<verbatim>\n" . join( "\n", @returnlist ) . "\n</verbatim>" );
+        $graph =
+          "<verbatim>\n$graph\n</verbatim>$graph\nDGWMP elapsed seconds: "
+          . Time::HiRes::tv_interval($t0) . "<br>";
     }
-    else {
-        return Foswiki::Func::expandCommonVariables( ( join "\n", @returnlist ),
-            $theTopic, $theWeb );
+    $processingDotMarkup = 1;
+    if ($debug) {
+        $t0 = [ Time::HiRes::gettimeofday() ];
     }
+    $graph = Foswiki::Func::expandCommonVariables( $graph, $theTopic, $theWeb );
+    if ($debug) {
+        $graph .=
+          "DGP elapsed seconds: " . Time::HiRes::tv_interval($t0) . "\n\n";
+    }
+    $processingDotMarkup = 0;
+
+    return $graph;
 }
 
 sub commonParameterDefaults {
@@ -371,6 +459,14 @@ sub commonParameterDefaults {
         }
     }
 
+    unless ( defined $params->{"cache"} ) {
+        $params->{"cache"} = Foswiki::Func::getPluginPreferencesValue("CACHE");
+        unless ( defined $params->{"cache"} ) {
+            $params->{"cache"} = "on";
+        }
+    }
+    $params->{"cache"} = Foswiki::Func::isTrue($params->{"cache"});
+
     unless ( $params->{"file"} and $params->{"file"} =~ /^\w+$/ ) {
         $params->{"file"} = undef;
     }
@@ -379,7 +475,8 @@ sub commonParameterDefaults {
         $params->{"engine"} = undef;
     }
 
-# Check if it is defined, so that the parameter may be empty and still override the plugin preference.
+    # Check if it is defined, so that the parameter may be empty
+    # and still override the plugin preference.
     unless ( defined $params->{"expand"} ) {
         $params->{"expand"} =
           Foswiki::Func::getPluginPreferencesValue("EXPAND");
@@ -400,6 +497,17 @@ sub commonParameterDefaults {
         $params->{rankdir} = "LR" if ( $params->{"lr"} );
         $params->{rankdir} = "TB" unless $params->{rankdir};
     }
+
+    if ( defined $params->{"mapper"}
+        and $params->{"mapper"} =~ /([a-zA-Z0-9_:]+)/ )
+    {
+        $params->{"mapper"} = $1;
+    }
+    else {
+        $params->{mapper} = "FindRenderedLinks";
+
+        #$params->{mapper} = "Search";
+    }
 }
 
 sub forwardlinks {
@@ -416,7 +524,8 @@ sub forwardlinks {
             next if $targetTopic eq $nodeUrlOutput;
             if ( $webmap->{$baseTopic}{$targetTopic} ) {
                 $webmap->{$baseTopic}{$targetTopic} = 0;
-                $debug
+                0
+                  && $debug
                   && Foswiki::Func::writeDebug("$baseTopic -> $targetTopic");
                 my $targetTopicUrl =
                   Foswiki::Func::getViewUrl( $web, $targetTopic );
@@ -447,7 +556,8 @@ sub backlinks {
             next if $baseTopic eq $nodeUrlOutput;
             if ( $webmap->{$baseTopic}{$targetTopic} ) {
                 $webmap->{$baseTopic}{$targetTopic} = 0;
-                $debug
+                0
+                  && $debug
                   && Foswiki::Func::writeDebug("$baseTopic -> $targetTopic");
                 my $baseTopicUrl =
                   Foswiki::Func::getViewUrl( $web, $baseTopic );
@@ -465,148 +575,166 @@ sub backlinks {
 
 sub getWebMap {
     my $params = shift;
-
-    my $webmap;
-
-    ## No caching
-    #$webmap = populateWebMapArray( $params->{"web"}, $params );
+    my $web    = $params->{"web"};
 
     # Fetch web from cache
-    my $mapkey = $params->{"expand"}.$params->{"excludesystem"}.$params->{"exclude"}.$params->{"web"};
-    if (not exists $webmaps->{$mapkey})
-    {
-        $webmaps->{$mapkey} = populateWebMapArray($params->{"web"}, $params);
+    my $mapkey =
+        $params->{"mapper"}
+      . $params->{"expand"}
+      . $params->{"excludesystem"}
+      . $params->{"exclude"};
+    if ( not exists $webmaps->{$web}->{$mapkey} and $params->{"cache"} ) {
+        $webmaps->{$web}->{$mapkey} = _readSavedMap( $web, $mapkey );
     }
-    # Make a deep copy of the webmap so that forwardlinks() and backlinks() don't break the cache copy
-    my %webmapcopy;
-    for my $baseTopic (keys %{$webmaps->{$mapkey}})
-    {
-        my %targets = %{$webmaps->{$mapkey}->{$baseTopic}};
-        $webmapcopy{$baseTopic} = \%targets;
-    }
-    $webmap = \%webmapcopy;
+    if ( not defined $webmaps->{$web}->{$mapkey} or not $params->{"cache"} ) {
+        my $mapper =
+          "Foswiki::Plugins::DirectedGraphWebMapPlugin::" . $params->{"mapper"};
+        eval "use $mapper;";
+        die $@ if $@;
+        $webmaps->{$web}->{$mapkey} =
+          $mapper->populateWebMapArray( $web, $params );
 
-    return $webmap;
+        _saveMap( $web, $mapkey, $webmaps->{$web}->{$mapkey} ) if $params->{"cache"};
+    }
+
+    # Make a deep copy of the webmap so that forwardlinks() and
+    # backlinks() don't break the cache copy
+    return dclone( $webmaps->{$web}->{$mapkey} );
 }
 
-sub populateWebMapArray {
-    my $web       = $_[0];
-    my $params    = $_[1];
-    my @topicList = Foswiki::Func::getTopicList($web);
+sub _readSavedMap {
+    my $web    = shift;
+    my $mapkey = shift;
 
-    my %webmap
-      ; # $webmap{$baseTopic}{$targetTopic} = 1 if $baseTopic links to $targetTopic.  DOES NOT CROSS WEBS
+    my $IN_FILE;
 
-    # Build a regex that matches a link to a topic in the same web
-    my $urlhost = Foswiki::Func::getUrlHost();
-    my $viewurl = Foswiki::Func::getViewUrl( $web, "TOPIC" );
-    $viewurl =~ s/^$urlhost//;
-    $viewurl =~ s:/TOPIC$::;
-    my $href =
-      qr(<a[^>]+href\s*=\s*"(?:$urlhost)?$viewurl/(\w+)(?:#\w+)?"[^>]*>);
+    #print STDERR "Looking for map: " . _mapFilename( $web, $mapkey ) . "\n";
+    open( $IN_FILE, '<', _mapFilename( $web, $mapkey ) ) or return undef;
 
-    # Create a list of variables to be expanded prior to searching for links
-    my $varList = $params->{"expand"};
-    $varList =~ s/^\s+//;
-    $varList =~ s/\s+$//;
-    my @vars = split( /[ ,]+/, $varList );
+    #print STDERR "Reading map from " . _mapFilename( $web, $mapkey ) . "\n";
+    binmode $IN_FILE;
+    local $/ = undef;    # set to read to EOF
+    my $data = <$IN_FILE>;
+    close($IN_FILE);
 
-    # Create a list of topics to be excluded
-    my %excludeTopic = ();
-    if ( $params->{"excludesystem"} ) {
-        foreach (@systemTopics) {
-            $excludeTopic{$_} = 1;
-        }
+    unless ( eval { $data = thaw($data); 1; } ) {
+        $data = undef;
     }
-    my $excludeList = $params->{"exclude"};
-    $excludeList =~ s/^\s+//;
-    $excludeList =~ s/\s+$//;
-    foreach ( split( /[ ,]+/, $excludeList ) ) {
-        $excludeTopic{$_} = 1;
-    }
-
-    foreach my $baseTopic (@topicList) {
-        if ( exists $excludeTopic{$baseTopic} ) {
-            $debug
-              && Foswiki::Func::writeDebug(
-                "${pluginName}: Skipping $web.$baseTopic (excluded)");
-            next;
-        }
-        $debug
-          && Foswiki::Func::writeDebug(
-            "${pluginName}: Scanning $web.$baseTopic");
-
-        my $baseTopicText =
-          Foswiki::Func::readTopicText( $web, $baseTopic, "", 1 );
-
-        # expand WEB and TOPIC variables
-        $baseTopicText =~
-s/(%(?:HOME|NOTIFY|WEBPREFS|WIKIPREFS|WIKIUSERS)?TOPIC%)/Foswiki::Func::expandCommonVariables($1, $baseTopic, $web)/ge;
-        $baseTopicText =~ s/%MAINWEB%/$Foswiki::cfg{UsersWebName}/ge
-          ;    # faster than expandCommonVariables
-        $baseTopicText =~ s/%SYSTEMWEB%/$Foswiki::cfg{SystemWebName}/ge;
-
-        # skip meta
-        $baseTopicText =~ s/%META[^%]+%//g;
-
-        #         # throw away text part of forced links
-        #         $baseTopicText =~ s/\[\[([^\]]*)(\]\[)?([^\]]*)\]\]/$1/g;
-        # Throw away %WEBMAP% to prevent recursive rendering
-        $baseTopicText =~ s/%WEBMAP%//g;
-        $baseTopicText =~ s/%WEBMAP{[^}]*}%//g;
-
-        # Throw away %TOPICMAP% to prevent recursive rendering
-        $baseTopicText =~ s/%TOPICMAP%//g;
-        $baseTopicText =~ s/%TOPICMAP{[^}]*}%//g;
-
-        # expand user-specified variables
-        for my $var (@vars) {
-            $baseTopicText =~
-s/(%$var%)/Foswiki::Func::expandCommonVariables($1, $baseTopic, $web)/ge;
-            $baseTopicText =~
-s/(%$var\{.*?}%)/Foswiki::Func::expandCommonVariables($1, $baseTopic, $web)/ge;
-        }
-
-        # ... in fact, throw away ALL remaining variables
-        $baseTopicText =~ s/%\w+[^%]*%//g
-          ; # The \w+ makes it more robust with respect to errors like $RED%. Note that [^%] matches a newline.
-            # Discarding variables can also discard links if there are markup errors like the following:
-            # %RED$ SomeLink %ENDCOLOR%
-
-        my $renderedTopic =
-          Foswiki::Func::renderText( $baseTopicText, $web, $baseTopic );
-        my @links = $renderedTopic =~ /$href/g;
-        while (@links) {
-            my $targetTopic = shift @links;
-            if ( exists $excludeTopic{$targetTopic} ) {
-                $debug
-                  && Foswiki::Func::writeDebug(
-"Skipping $baseTopic -> $targetTopic ($targetTopic excluded)"
-                  );
-                next;
-            }
-            $debug && Foswiki::Func::writeDebug("$baseTopic -> $targetTopic");
-            $webmap{$baseTopic}{$targetTopic} = 1;
-        }
-    }
-    foreach my $topic (@topicList) {
-        next if exists $excludeTopic{$topic};
-
-# ensure that every topic has an entry in the array -- linking to itself (which we should ignore later)
-        $webmap{$topic}{$topic} = 0;
-    }
-
-    return \%webmap;
+    return $data;
 }
+
+sub _saveMap {
+    my $web    = shift;
+    my $mapkey = shift;
+    my $map    = shift;
+
+    # Don't care if this fails, because the cause might be
+    # another process writing to the same file
+    my $FILE;
+    if ( open( $FILE, '>', _mapFilename( $web, $mapkey ) ) ) {
+        binmode $FILE;
+        print $FILE freeze($map);
+        close($FILE);
+    }
+
+    #print STDERR "Saved map to " . _mapFilename( $web, $mapkey ) . "\n";
+}
+
+sub _mapFilename {
+    my $web    = shift;
+    my $mapkey = shift;
+
+    $web = Foswiki::Sandbox::validateWebName($web) || 'x';
+    $web =~ s{[\\/.]}{!}g;
+    return Foswiki::Sandbox::untaintUnchecked(
+        Foswiki::Func::getWorkArea('DirectedGraphWebMapPlugin')
+      . "/$web."
+      . md5_hex($mapkey) );
+}
+
+sub _readSavedGraph {
+    my $params = shift;
+
+    my $IN_FILE;
+
+    #print STDERR "Looking for graph " . _graphFilename($params) . "\n";
+    open( $IN_FILE, '<', _graphFilename($params) ) or return undef;
+
+    #print STDERR "Reading graph from " . _graphFilename($params) . "\n";
+    binmode $IN_FILE;
+    local $/ = undef;    # set to read to EOF
+    my $data = <$IN_FILE>;
+    close($IN_FILE);
+
+    unless ( eval { $data = ${ thaw($data) }; 1; } ) {
+        $data = undef;
+    }
+    return $data;
+}
+
+sub _saveGraph {
+    my $params = shift;
+    my $graph  = shift;
+
+    # Don't care if this fails, because the cause might be
+    # another process writing to the same file
+    my $FILE;
+    if ( open( $FILE, '>', _graphFilename($params) ) ) {
+        binmode $FILE;
+        print $FILE freeze( \$graph );
+        close($FILE);
+    }
+
+    #print STDERR "Saved graph to " . _graphFilename($params) . "\n";
+}
+
+sub _graphFilename {
+    my $params = shift;
+
+    my $graphkey = join(
+        ',',
+        map {
+            "$_=>"
+              . ( defined( $params->{$_} ) ? "'$params->{$_}'" : "undef" )
+          } sort keys %$params
+    );
+
+    my $web = Foswiki::Sandbox::validateWebName($params->{web}) || 'x';
+    $web =~ s{[\\/.]}{!}g;
+    return Foswiki::Sandbox::untaintUnchecked(
+        Foswiki::Func::getWorkArea('DirectedGraphWebMapPlugin') 
+      . "/$web."
+      . md5_hex($graphkey) );
+}
+
+sub _cleanCache {
+    my $web = shift;
+    delete $webmaps->{$web};
+    $web =~ s{[\\/]}{!}g;
+
+    find(
+        {
+            untaint => 1,
+
+            wanted => sub {
+
+            # unchecked untaint is fine because the directory came from the core
+            # and all files in that directory belong to this plugin
+                unlink($1) if /^($web\..*)/;
+            },
+        },
+        Foswiki::Func::getWorkArea('DirectedGraphWebMapPlugin')
+    );
+}
+
 1;
 __END__
 This copyright information applies to the DirectedGraphWebMapPlugin:
 
 # Plugin for Foswiki - The Free and Open Source Wiki, http://foswiki.org/
 #
-# DirectedGraphWebMapPlugin is Copyright (C) 2008 Foswiki Contributors. Foswiki Contributors
-# are listed in the AUTHORS file in the root of this distribution.
-# NOTE: Please extend that file, not this notice.
+# DirectedGraphWebMapPlugin is Copyright (C) 2008-2010 Foswiki Contributors. Foswiki Contributors
+# are listed in the AUTHORS file in the root of the Foswiki distribution.
 # Additional copyrights apply to some or all of the code as follows:
 # Copyright (C) 2000-2003 Andrea Sterbini, a.sterbini@flashnet.it
 # Copyright (C) 2001-2006 Peter Thoeny, peter@thoeny.org
