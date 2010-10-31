@@ -34,23 +34,32 @@ sub populateWebMapArray {
         $excludeTopic{$_} = 1;
     }
 
-    # $webmap{$baseTopic}{$targetTopic} = 1 if $baseTopic links to $targetTopic.  
+    # $webmap{$baseTopic}{$targetTopic} = 1 if $baseTopic links to $targetTopic.
     # DOES NOT CROSS WEBS
-    my %webmap; 
+    my %webmap;
 
     my %referencedIn;
     for my $targetTopic (@topicList) {
         next if exists $excludeTopic{$targetTopic};
 
-		my $matches = Foswiki::Func::query( "\\b$targetTopic\\b", \@topicList,
-				{ web => $web, casesensitive => 1, type => 'regex', files_without_match => 1 } );
-		while ($matches->hasNext) {
-			my $webtopic = $matches->next;
-			my ($unused_web, $baseTopic) = Foswiki::Func::normalizeWebTopicName('', $webtopic);
+        my $matches = Foswiki::Func::query(
+            "\\b$targetTopic\\b",
+            \@topicList,
+            {
+                web                 => $web,
+                casesensitive       => 1,
+                type                => 'regex',
+                files_without_match => 1
+            }
+        );
+        while ( $matches->hasNext ) {
+            my $webtopic = $matches->next;
+            my ( $unused_web, $baseTopic ) =
+              Foswiki::Func::normalizeWebTopicName( '', $webtopic );
 
             next if exists $excludeTopic{$baseTopic};
             $webmap{$baseTopic}{$targetTopic} = 1;
-		}
+        }
 
         #print STDERR "searched for $targetTopic";
 
@@ -59,7 +68,7 @@ sub populateWebMapArray {
     foreach my $topic (@topicList) {
         next if exists $excludeTopic{$topic};
 
-        # ensure that every topic has an entry in the array 
+        # ensure that every topic has an entry in the array
         # -- linking to itself (which we should ignore later)
         $webmap{$topic}{$topic} = 0;
     }

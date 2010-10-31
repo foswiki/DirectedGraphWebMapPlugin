@@ -4,8 +4,6 @@
 
 ---+ package DirectedGraphWebMapPlugin
 
-
-
 =cut
 
 package Foswiki::Plugins::DirectedGraphWebMapPlugin;
@@ -244,8 +242,7 @@ sub _TOPICMAP {
     }
 
     my $graph;
-    if ($params{"cache"})
-    {
+    if ( $params{"cache"} ) {
         $graph = _readSavedGraph( \%params );
     }
 
@@ -369,8 +366,7 @@ sub _WEBMAP {
     }
 
     my $graph;
-    if ($params{"cache"})
-    {
+    if ( $params{"cache"} ) {
         $graph = _readSavedGraph( \%params );
     }
 
@@ -465,7 +461,7 @@ sub commonParameterDefaults {
             $params->{"cache"} = "on";
         }
     }
-    $params->{"cache"} = Foswiki::Func::isTrue($params->{"cache"});
+    $params->{"cache"} = Foswiki::Func::isTrue( $params->{"cache"} );
 
     unless ( $params->{"file"} and $params->{"file"} =~ /^\w+$/ ) {
         $params->{"file"} = undef;
@@ -594,7 +590,8 @@ sub getWebMap {
         $webmaps->{$web}->{$mapkey} =
           $mapper->populateWebMapArray( $web, $params );
 
-        _saveMap( $web, $mapkey, $webmaps->{$web}->{$mapkey} ) if $params->{"cache"};
+        _saveMap( $web, $mapkey, $webmaps->{$web}->{$mapkey} )
+          if $params->{"cache"};
     }
 
     # Make a deep copy of the webmap so that forwardlinks() and
@@ -647,9 +644,9 @@ sub _mapFilename {
     $web = Foswiki::Sandbox::validateWebName($web) || 'x';
     $web =~ s{[\\/.]}{!}g;
     return Foswiki::Sandbox::untaintUnchecked(
-        Foswiki::Func::getWorkArea('DirectedGraphWebMapPlugin')
-      . "/$web."
-      . md5_hex($mapkey) );
+            Foswiki::Func::getWorkArea('DirectedGraphWebMapPlugin') 
+          . "/$web."
+          . md5_hex($mapkey) );
 }
 
 sub _readSavedGraph {
@@ -699,12 +696,12 @@ sub _graphFilename {
           } sort keys %$params
     );
 
-    my $web = Foswiki::Sandbox::validateWebName($params->{web}) || 'x';
+    my $web = Foswiki::Sandbox::validateWebName( $params->{web} ) || 'x';
     $web =~ s{[\\/.]}{!}g;
     return Foswiki::Sandbox::untaintUnchecked(
-        Foswiki::Func::getWorkArea('DirectedGraphWebMapPlugin') 
-      . "/$web."
-      . md5_hex($graphkey) );
+            Foswiki::Func::getWorkArea('DirectedGraphWebMapPlugin') 
+          . "/$web."
+          . md5_hex($graphkey) );
 }
 
 sub _cleanCache {

@@ -21,6 +21,7 @@ sub populateWebMapArray {
     my @topicList = Foswiki::Func::getTopicList($web);
 
     my %webmap;
+
     # $webmap{$baseTopic}{$targetTopic} = 1 if $baseTopic links to $targetTopic.
     # DOES NOT CROSS WEBS
 

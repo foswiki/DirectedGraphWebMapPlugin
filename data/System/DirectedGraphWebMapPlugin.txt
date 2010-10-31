@@ -92,7 +92,8 @@ Test if the installation was successful:
 |  License: | GPL ([[http://www.gnu.org/copyleft/gpl.html][GNU General Public License]]) |
 |  Version: | %$VERSION% |
 |  Change History: | <!-- specify latest version first --> |
-|  17 Oct 2010: | Cache graphs and maps to improve performance |
+|  31 Oct 2010: | Re-release for more-consistent version numbers |
+|  17 Oct 2010: | Foswikitask:Item8307: Cache graphs and maps to improve performance |
 |  22 Mar 2009: | Ported to Foswiki %BR% Removed plugin settings from plugin topic %BR% Added file, engine, rankdir, exclude and expand parameters %BR% Fixed bugs that caused incomplete graphs and missing hyperlinks %BR% links and backlinks parameters may be 0 %BR% Changed node shape to fit more nodes on the screen %BR% Use white text when background is dark |
 |  19 Apr 2006: | Updated doc, enabled debug (now writes generated dot graph in verbatim if debug is enabled) (TWiki:Main.SteffenPoulsen) |
 |  16 Apr 2006: | Added max size parameter, updated doc (TWiki:Main.SteffenPoulsen) |
