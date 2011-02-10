@@ -88,10 +88,11 @@ Test if the installation was successful:
 ---++ Plugin Info
 
 |  Author: | TWiki:Main.MagnusLewisSmith Foswiki:Main.MichaelTempest |
-|  Copyright: | (C) 2009-2010, Foswiki Contributors <br> (C) 2000-2003 Andrea Sterbini, a.sterbini@flashnet.it <br> (C) 2001-2006 Peter Thoeny, peter@thoeny.org |
+|  Copyright: | (C) 2009-2011, Foswiki Contributors <br> (C) 2000-2003 Andrea Sterbini, a.sterbini@flashnet.it <br> (C) 2001-2006 Peter Thoeny, peter@thoeny.org |
 |  License: | GPL ([[http://www.gnu.org/copyleft/gpl.html][GNU General Public License]]) |
 |  Version: | %$VERSION% |
 |  Change History: | <!-- specify latest version first --> |
+|  10 Feb 2011: | Foswikitask:Item10337: Fix untainting on windows |
 |  31 Oct 2010: | Re-release for more-consistent version numbers |
 |  17 Oct 2010: | Foswikitask:Item8307: Cache graphs and maps to improve performance |
 |  22 Mar 2009: | Ported to Foswiki %BR% Removed plugin settings from plugin topic %BR% Added file, engine, rankdir, exclude and expand parameters %BR% Fixed bugs that caused incomplete graphs and missing hyperlinks %BR% links and backlinks parameters may be 0 %BR% Changed node shape to fit more nodes on the screen %BR% Use white text when background is dark |

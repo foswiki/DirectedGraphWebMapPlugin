@@ -711,9 +711,9 @@ sub _cleanCache {
 
     find(
         {
-            untaint => 1,
-
-            wanted => sub {
+            untaint         => 1,
+            untaint_pattern => qr|^([-+@\w./:]+)$|,
+            wanted          => sub {
 
             # unchecked untaint is fine because the directory came from the core
             # and all files in that directory belong to this plugin
