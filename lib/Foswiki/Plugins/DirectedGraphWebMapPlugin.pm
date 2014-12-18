@@ -24,12 +24,12 @@ require Foswiki::Plugins;    # For the API version
 # This should always be $Rev$ so that Foswiki can determine the checked-in
 # status of the plugin. It is used by the build automation tools, so
 # you should leave it alone.
-our $VERSION = '$Rev$';
+our $VERSION = '9810';
 
 # This is a free-form string you can use to "name" your own plugin version.
 # It is *not* used by the build automation tools, but is reported as part
 # of the version number in PLUGINDESCRIPTIONS.
-our $RELEASE = '$Date: 2008-12-14 19:49:56 +0200 (Sun, 14 Dec 2008) $';
+our $RELEASE = '9810';
 
 # Short description of this plugin
 # One line description, is shown in the %SYSTEMWEB%.TextFormattingRules topic:

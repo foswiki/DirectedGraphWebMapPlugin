@@ -1,0 +1,9 @@
+*.swp
+igp_*
+DirectedGraphWebMapPlugin.md5
+DirectedGraphWebMapPlugin.sha1
+DirectedGraphWebMapPlugin.tgz
+DirectedGraphWebMapPlugin.txt
+DirectedGraphWebMapPlugin.zip
+DirectedGraphWebMapPlugin_installer
+DirectedGraphWebMapPlugin_installer.pl
